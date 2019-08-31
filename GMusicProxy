@@ -144,7 +144,7 @@ class GetHandler(BaseHTTPRequestHandler):
             self._send_headers(200)
             if self._check_aa():
                 return
-            result = self._search(type=params['type'][0].lower().strip() if 'type' in params else 'artist', query_title=params['title'][0].decode(
+            result = self._search2(type=params['type'][0].lower().strip() if 'type' in params else 'artist', query_title=params['title'][0].decode(
                 'latin-1') if 'title' in params else '', query_artist=params['artist'][0].decode('latin-1') if 'artist' in params else '', exact=params['exact'][0].lower().strip() if 'exact' in params else 'yes')
             if result:
                 self.wfile.write(result)
@@ -689,7 +689,93 @@ class GetHandler(BaseHTTPRequestHandler):
                 logger.warning('No matching found.')
         else:
             return
-
+        
+   def _search2(self, type, query_title, query_artist, exact, max_results=None):
+        if type is None or type not in ['artist', 'song', 'album', 'matches']:
+            logger.warning(
+                'The type of search has to be specified: artist, song, album or matches!')
+            return
+        logger.info('Searching for %s with query: %s %s',
+                    type, query_artist, query_title)
+        match = None
+        if type == 'artist':
+            results = self._robust_retry(lambda: api.search(query_artist))
+            logger.debug(pprint.pformat(results))
+            if exact != 'yes' and 'artist_hits' in results and len(results['artist_hits']) > 0:
+                logger.debug(
+                    'I\'m feeling lucky: lets select the first artist in list!')
+                match = results['artist_hits'][0]
+            else:
+                if 'artist_hits' in results:
+                    for artist in results['artist_hits']:
+                        if 'name' in artist['artist'] and artist['artist']['name'].lower().strip() == query_artist.lower().strip():
+                            logger.debug(
+                                'Found exact matching artist in list!')
+                            match = artist
+                            break
+            if match and 'artist' in match and 'artistId' in match['artist']:
+                logger.info('Selected artist: %s (%s)', match['artist'][
+                            'name'], match['artist']['artistId'])
+                logger.debug(pprint.pformat(match))
+                return match['artist']['artistId']
+            else:
+                logger.warning('No matching found.')
+        elif type == 'song':
+            results = self._robust_retry(lambda: api.search(
+                '%s %s' % (query_artist, query_title)))
+            logger.debug(pprint.pformat(results))
+            if exact != 'yes' and 'song_hits' in results and len(results['song_hits']) > 0:
+                logger.debug('I\'m feeling lucky: lets select the first song!')
+                match = results['song_hits'][0]
+            else:
+                if 'song_hits' in results:
+                    for song in results['song_hits']:
+                        if 'title' in song['track'] and song['track']['title'].lower().strip() == query_title.lower().strip() and 'artist' in song['track'] and song['track']['artist'].lower().strip() == query_artist.lower().strip():
+                            logger.debug('Found exact matching song!')
+                            match = song
+                            break
+            if match and 'track' in match and 'storeId' in match['track']:
+                logger.info('Selected song: %s - %s (%s)', match['track'][
+                            'artist'], match['track']['title'], match['track']['storeId'])
+                logger.debug(pprint.pformat(match))
+                return ('%s || %s || %s' % (match['track']['artist'], match['track']['title'], match['track']['storeId'])).encode('utf-8')
+                #return match['track']['artist']+'||'+match['track']['title']+'||'+match['track']['storeId']
+            else:
+                logger.warning('No matching found.')
+        elif type == 'matches':
+            results = self._robust_retry(lambda: api.search(
+                '%s %s' % (query_artist, query_title), max_results))
+            logger.debug(pprint.pformat(results))
+            match = results['song_hits']
+            if match:
+                return match
+            else:
+                logger.warning('No matching found.')
+        elif type == 'album':
+            results = self._robust_retry(lambda: api.search(
+                '%s %s' % (query_artist, query_title)))
+            logger.debug(pprint.pformat(results))
+            if exact != 'yes' and 'album_hits' in results and len(results['album_hits']) > 0:
+                logger.debug(
+                    'I\'m feeling lucky: lets select the first album in list!')
+                match = results['album_hits'][0]
+            else:
+                if 'album_hits' in results:
+                    for album in results['album_hits']:
+                        if 'name' in album['album'] and album['album']['name'].lower().strip() == query_title.lower().strip() and 'artist' in album['album'] and album['album']['artist'].lower().strip() == query_artist.lower().strip():
+                            logger.debug('Found exact matching album in list!')
+                            match = album
+                            break
+            if match and 'album' in match and 'albumId' in match['album']:
+                logger.info('Selected album: %s - %s (%s)', match['album'][
+                            'artist'], match['album']['name'], match['album']['albumId'])
+                logger.debug(pprint.pformat(match))
+                return match['album']['albumId']
+            else:
+                logger.warning('No matching found.')
+        else:
+            return
+ 
     def _rate_song(self, id, rating=0):
         if config['disable_all_access']:
             info = None
